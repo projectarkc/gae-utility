@@ -1,21 +1,23 @@
 import cgi
 import urllib
+import hashlib.sha1
 
 from google.appengine.api import users, urlfetch
 from google.appengine.ext import ndb
 
 import webapp2
 
-MAIN_PAGE_FOOTER_TEMPLATE = """\
+Form_FOOTER_TEMPLATE = """\
     <form action="/register?%s" method="post">
       IP Address of the server:  <input type="text" name="ipaddr"><br>
+      Number of clients assigned: <input type="text" name="number"><br>
       <div><input type="submit" value="Register for ArkC"></div>
     </form>
   </body>
 </html>
 """
 
-DEFAULT_GUESTBOOK_NAME = 'default_guestbook'
+DEFAULT_DB_NAME = 'default_guestbook'
 
 # We set a parent key on the 'Greetings' to ensure that they are all
 # in the same entity group. Queries across the single entity group
@@ -27,65 +29,41 @@ def guestbook_key(guestbook_name=DEFAULT_GUESTBOOK_NAME):
 
     We use guestbook_name as the key.
     """
-    return ndb.Key('Guestbook', guestbook_name)
+    return ndb.Key('DB', guestbook_name)
 
-
-class Author(ndb.Model):
-    """Sub model for representing an author."""
-    identity = ndb.StringProperty(indexed=False)
-    email = ndb.StringProperty(indexed=False)
-
-
-class Greeting(ndb.Model):
+class User(ndb.Model):
     """A main model for representing an individual Guestbook entry."""
-    author = ndb.StructuredProperty(Author)
+    identity = ndb.StringProperty()
+    #password = ndb.StringProperty(indexed = False)
+    number = ndb.StringProperty(indexed = False)
     content = ndb.StringProperty(indexed=False)
     date = ndb.DateTimeProperty(auto_now_add=True)
 
 
-class MainPage(webapp2.RequestHandler):
+class Form(webapp2.RequestHandler):
     def get(self):
         self.response.write('<html><body>')
         guestbook_name = self.request.get('guestbook_name',
-                                          DEFAULT_GUESTBOOK_NAME)
-
-        # Ancestor Queries, as shown here, are strongly consistent
-        # with the High Replication Datastore. Queries that span
-        # entity groups are eventually consistent. If we omitted the
-        # ancestor from this query there would be a slight chance that
-        # Greeting that had just been written would not show up in a
-        # query.
-        greetings_query = Greeting.query(
-            ancestor=guestbook_key(guestbook_name)).order(-Greeting.date)
-        greetings = greetings_query.fetch(10)
-
-        user = users.get_current_user()
-        for greeting in greetings:
-            if greeting.author:
-                author = greeting.author.email
-                if user and user.user_id() == greeting.author.identity:
-                    author += ' (You)'
-                self.response.write('<b>%s</b> wrote:' % author)
-            else:
-                self.response.write('An anonymous person wrote:')
-            self.response.write('<blockquote>%s</blockquote>' %
-                                cgi.escape(greeting.content))
-
-        if user:
-            url = users.create_logout_url(self.request.uri)
-            url_linktext = 'Logout'
-        else:
-            url = users.create_login_url(self.request.uri)
-            url_linktext = 'Login'
+                                          DEFAULT_DB_NAME)
 
         # Write the submission form and the footer of the page
         sign_query_params = urllib.urlencode({'guestbook_name':
                                               guestbook_name})
-        self.response.write(MAIN_PAGE_FOOTER_TEMPLATE %
-                            (sign_query_params, cgi.escape(guestbook_name),
-                             url, url_linktext))
+        self.response.write(Form_FOOTER_TEMPLATE % (sign_query_params))
+        
+class ShowResult(webapp2.RequestHandler):
+    # TODO: edit for query
+    def get(self):
+        self.response.write('<html><body>')
+        guestbook_name = self.request.get('guestbook_name',
+                                          DEFAULT_DB_NAME)
 
-class Guestbook(webapp2.RequestHandler):
+        # Write the submission form and the footer of the page
+        sign_query_params = urllib.urlencode({'guestbook_name':
+                                              guestbook_name})
+        self.response.write(Form_FOOTER_TEMPLATE % (sign_query_params))
+
+class Register(webapp2.RequestHandler):
     def post(self):
         # We set the same parent key on the 'Greeting' to ensure each
         # Greeting is in the same entity group. Queries across the
@@ -94,22 +72,23 @@ class Guestbook(webapp2.RequestHandler):
         # ~1/second.
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_GUESTBOOK_NAME)
-        greeting = Greeting(parent=guestbook_key(guestbook_name))
+        userrecord = Greeting(parent=guestbook_key(guestbook_name))
 
-        if users.get_current_user():
-            greeting.author = Author(
-                    identity=users.get_current_user().user_id(),
-                    email=users.get_current_user().email())
-
-        greeting.content = self.request.get('ipaddr')
-        greeting.put()
+        userrecord.content = self.request.get('ipaddr')
+        #userrecord.password = self.request.get('password')
+        userrecord.number = self.request.get('number')
+        h = hashlib.sha1()
+        userrecord.identity = h.update(self.request.get('ipaddr'))
+        userrecord.put()
         
-        #TODO: URLfetch with greeting.content
+        #TODO: URLfetch with userrecord.content
 
-        query_params = {'guestbook_name': guestbook_name}
+        #query_params = {'guestbook_name': guestbook_name}
+        
         self.redirect('/?' + urllib.urlencode(query_params))
 
 app = webapp2.WSGIApplication([
-    ('/', MainPage),
-    ('/register', Guestbook),
+    ('/', Form),
+    ('/result', ShowResult),
+    ('/register', Register),
 ], debug=True)
