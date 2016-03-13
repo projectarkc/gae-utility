@@ -12,6 +12,7 @@ Form_FOOTER_TEMPLATE = """\
       This form creates an NS DNS record for you, so that you can use it as control_domain without owning a domain.<br>
       <br>
       IP Address of the server:  <input type="text" name="ipaddr"><br>
+      Please provide your email address in case we need to modify DNS settings:  <input type="text" name="email"><br>
       <div><input type="submit" value="Register for ArkC"></div>
     </form>
     <hr>
@@ -62,6 +63,7 @@ class User(ndb.Model):
     content = ndb.StringProperty(indexed=False)
     NS_record = ndb.StringProperty(indexed=False)
     A_record = ndb.StringProperty(indexed=False)
+    email = ndb.StringProperty(indexed=False)
     date = ndb.DateTimeProperty(auto_now_add=True)
 
 
@@ -76,7 +78,8 @@ class NSForm(webapp2.RequestHandler):
         sign_query_params = urllib.urlencode({'guestbook_name':
                                               guestbook_name})
         self.response.write(Form_FOOTER_TEMPLATE % (sign_query_params))
-        
+
+
 class cfgForm(webapp2.RequestHandler):
 
     def get(self):
@@ -104,7 +107,9 @@ class cfgForm(webapp2.RequestHandler):
 """
         self.response.write(resp)
 
+
 class ShowResult(webapp2.RequestHandler):
+
     def post(self):
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_DB_NAME)
@@ -132,19 +137,21 @@ class ShowResult(webapp2.RequestHandler):
 </html>'''
         self.response.write(resp)
 
+
 class ShowJSON(webapp2.RequestHandler):
+
     def post(self):
-        
+
         jsontext = '''{
     "local_cert_path":"%s",
     "clients": [["%s", "%s"]],
     "obfs_level":%s,
     "pt_exec":"%s"
 }''' % (self.request.get('localcert', ''),
-        self.request.get('clientpub', ''),
-        self.request.get('clientsha1', ''),
-        self.request.get('meek', '0'),
-        self.request.get('meekexec', '')
+            self.request.get('clientpub', ''),
+            self.request.get('clientsha1', ''),
+            self.request.get('meek', '0'),
+            self.request.get('meekexec', '')
         )
         resp = '''<html><body>
         <form>
@@ -173,31 +180,34 @@ class NSRegister(webapp2.RequestHandler):
             h = hashlib.sha1()
             h.update(self.request.get('ipaddr'))
             userrecord_query = User.query(
-                                          ancestor=guestbook_key(guestbook_name)).filter(User.identity == h.hexdigest())
+                ancestor=guestbook_key(guestbook_name)).filter(User.identity == h.hexdigest())
             userrecords = userrecord_query.fetch(1)
             if len(userrecords) == 0:
-                userrecord.NS_record = h.hexdigest()[:10] + '.' + SECONDARY_DOMAIN
-                userrecord.A_record = h.hexdigest()[:10] + '.a.' + SECONDARY_DOMAIN
+                userrecord.NS_record = h.hexdigest()[
+                    :10] + '.' + SECONDARY_DOMAIN
+                userrecord.A_record = h.hexdigest()[
+                    :10] + '.a.' + SECONDARY_DOMAIN
                 form_data1 = '''{"type":"NS","name":"%s", "content":"%s","ttl":3600}''' % (
-                userrecord.NS_record, userrecord.A_record)
+                    userrecord.NS_record, userrecord.A_record)
                 result1 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                     payload=form_data1,
-                                     method=urlfetch.POST,
-                                     headers={"X-Auth-Email": EMAIL,
-                                              "X-Auth-Key": AUTH_KEY,
-                                              "Content-Type": "application/json"})
+                                         payload=form_data1,
+                                         method=urlfetch.POST,
+                                         headers={"X-Auth-Email": EMAIL,
+                                                  "X-Auth-Key": AUTH_KEY,
+                                                  "Content-Type": "application/json"})
                 form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
-                userrecord.A_record, userrecord.content)
+                    userrecord.A_record, userrecord.content)
                 result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                     payload=form_data2,
-                                     method=urlfetch.POST,
-                                     headers={"X-Auth-Email": EMAIL,
-                                              "X-Auth-Key": AUTH_KEY,
-                                              "Content-Type": "application/json"})
+                                         payload=form_data2,
+                                         method=urlfetch.POST,
+                                         headers={"X-Auth-Email": EMAIL,
+                                                  "X-Auth-Key": AUTH_KEY,
+                                                  "Content-Type": "application/json"})
                 if result1.status_code == 200 and result2.status_code == 200:
+                    userrecord.email = self.request.get('email')
                     userrecord.put()
                     query_params = {
-                    'guestbook_name': guestbook_name, "identity": userrecord.identity}
+                        'guestbook_name': guestbook_name, "identity": userrecord.identity}
                     self.redirect('/result?' + urllib.urlencode(query_params))
                 else:
                     pass
