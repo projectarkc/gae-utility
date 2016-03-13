@@ -59,7 +59,7 @@ class User(ndb.Model):
     """A main model for representing an individual Guestbook entry."""
     identity = ndb.StringProperty(indexed=True)
     #password = ndb.StringProperty(indexed = False)
-    number = ndb.StringProperty(indexed=False)
+    #number = ndb.StringProperty(indexed=False)
     content = ndb.StringProperty(indexed=False)
     NS_record = ndb.StringProperty(indexed=False)
     A_record = ndb.StringProperty(indexed=False)
@@ -110,7 +110,7 @@ class cfgForm(webapp2.RequestHandler):
 
 class ShowResult(webapp2.RequestHandler):
 
-    def post(self):
+    def get(self):
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_DB_NAME)
         identity = self.request.get('identity', '')
@@ -183,6 +183,7 @@ class NSRegister(webapp2.RequestHandler):
                 ancestor=guestbook_key(guestbook_name)).filter(User.identity == h.hexdigest())
             userrecords = userrecord_query.fetch(1)
             if len(userrecords) == 0:
+                userrecord.identity = h.hexdigest()
                 userrecord.NS_record = h.hexdigest()[
                     :10] + '.' + SECONDARY_DOMAIN
                 userrecord.A_record = h.hexdigest()[
