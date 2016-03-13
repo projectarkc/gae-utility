@@ -8,10 +8,14 @@ from google.appengine.ext import ndb
 import webapp2
 
 Form_FOOTER_TEMPLATE = """\
-    <form action="/register?%s" method="post">
+    <form action="/nsregister?%s" method="post">
+      This form creates an NS DNS record for you, so that you can use it as control_domain without owning a domain.<br>
+      <br>
       IP Address of the server:  <input type="text" name="ipaddr"><br>
       <div><input type="submit" value="Register for ArkC"></div>
     </form>
+    <hr>
+    <a href="/fillconfig">Create server side JSON by filling a form.</a>
   </body>
 </html>
 """
@@ -20,12 +24,26 @@ DEFAULT_DB_NAME = 'default_guestbook'
 
 ######
 # CONFIG
+NAME_SERVICE_PROVIDER = "Cloudflare.com"
 ######
 
 # We set a parent key on the 'Greetings' to ensure that they are all
 # in the same entity group. Queries across the single entity group
 # will be consistent.  However, the write rate should be limited to
 # ~1/second.
+
+
+def validate_ip(s):
+    a = s.split('.')
+    if len(a) != 4:
+        return False
+    for x in a:
+        if not x.isdigit():
+            return False
+        i = int(x)
+        if i < 0 or i > 255:
+            return False
+    return True
 
 
 def guestbook_key(guestbook_name=DEFAULT_DB_NAME):
@@ -47,7 +65,7 @@ class User(ndb.Model):
     date = ndb.DateTimeProperty(auto_now_add=True)
 
 
-class Form(webapp2.RequestHandler):
+class NSForm(webapp2.RequestHandler):
 
     def get(self):
         self.response.write('<html><body>')
@@ -58,12 +76,36 @@ class Form(webapp2.RequestHandler):
         sign_query_params = urllib.urlencode({'guestbook_name':
                                               guestbook_name})
         self.response.write(Form_FOOTER_TEMPLATE % (sign_query_params))
-
-
-class ShowResult(webapp2.RequestHandler):
-    # TODO: edit for query
+        
+class cfgForm(webapp2.RequestHandler):
 
     def get(self):
+        resp = """<html><body>
+    <form action="/showjsonconfig" method="post">
+      Fill this form and we will generate the JSON config file at server side for you. For now it only support ONE client in the config. Add more later by yourself with the same format.<br>
+      Leave it blank if you have no idea about some boxes.<br>
+      <br>
+      Directory of your private server key: (The path specified after "Private key written to" when generating it, often ends with "...pri.asc".)<br>
+      <input type="text" name="localcert" size=60><br>
+      Directory of client public key: (Often copied to server) <br>
+      <input type="text" name="clientpub" size=60><br>
+      SHA1 value of the client private key: (Prompted when generating key pair at client side): <br>
+      <input type="text" name="clientsha1" size=60><br>
+      Using MEEK or not? If you intend to integrate with GAE (and CDN in the future), choose yes. <br>
+      <input type="radio" name="meek" value="3"> Yes<br>
+      <input type="radio" name="meek" value="0" checked=True> No<br>
+      MEEK executable path: (meek-client at server side.)<br>
+      <input type="text" name="meekexec" size=60><br>
+      <br>
+      <div><input type="submit" value="See the generated file."></div>
+    </form>
+  </body>
+</html>
+"""
+        self.response.write(resp)
+
+class ShowResult(webapp2.RequestHandler):
+    def post(self):
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_DB_NAME)
         identity = self.request.get('identity', '')
@@ -90,8 +132,31 @@ class ShowResult(webapp2.RequestHandler):
 </html>'''
         self.response.write(resp)
 
+class ShowJSON(webapp2.RequestHandler):
+    def post(self):
+        
+        jsontext = '''{
+    "local_cert_path":"%s",
+    "clients": [["%s", "%s"]],
+    "obfs_level":%s,
+    "pt_exec":"%s"
+}''' % (self.request.get('localcert', ''),
+        self.request.get('clientpub', ''),
+        self.request.get('clientsha1', ''),
+        self.request.get('meek', '0'),
+        self.request.get('meekexec', '')
+        )
+        resp = '''<html><body>
+        <form>
+      Example JSON configuration file at server side: <br>
+      <textarea rows="15" cols="40">%s</textarea>
+    </form>
+  </body>
+</html>''' % jsontext
+        self.response.write(resp)
 
-class Register(webapp2.RequestHandler):
+
+class NSRegister(webapp2.RequestHandler):
 
     def post(self):
         # We set the same parent key on the 'Greeting' to ensure each
@@ -102,41 +167,51 @@ class Register(webapp2.RequestHandler):
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_DB_NAME)
         userrecord = User(parent=guestbook_key(guestbook_name))
-
-        userrecord.content = self.request.get('ipaddr')
-        #userrecord.password = self.request.get('password')
-        #userrecord.number = self.request.get('number')
-        h = hashlib.sha1()
-        h.update(self.request.get('ipaddr'))
-        userrecord.identity = h.hexdigest()
-        userrecord.NS_record = h.hexdigest()[:10] + '.' + SECONDARY_DOMAIN
-        userrecord.A_record = h.hexdigest()[:10] + '.a.' + SECONDARY_DOMAIN
-        form_data1 = '''{"type":"NS","name":"%s", "content":"%s","ttl":3600}''' % (
-            userrecord.NS_record, userrecord.A_record)
-        result1 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                 payload=form_data1,
-                                 method=urlfetch.POST,
-                                 headers={"X-Auth-Email": EMAIL,
-                                          "X-Auth-Key": AUTH_KEY,
-                                          "Content-Type": "application/json"})
-        form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
-            userrecord.A_record, userrecord.content)
-        result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                 payload=form_data2,
-                                 method=urlfetch.POST,
-                                 headers={"X-Auth-Email": EMAIL,
-                                          "X-Auth-Key": AUTH_KEY,
-                                          "Content-Type": "application/json"})
-        if result1.status_code == 200 and result2.status_code == 200:
-            userrecord.put()
-            query_params = {
-                'guestbook_name': guestbook_name, "identity": userrecord.identity}
-            self.redirect('/result?' + urllib.urlencode(query_params))
+        userrecord.content = self.request.get('ipaddr').strip()
+        if validate_ip(userrecord.content):
+            #userrecord.password = self.request.get('password')
+            h = hashlib.sha1()
+            h.update(self.request.get('ipaddr'))
+            userrecord_query = User.query(
+                                          ancestor=guestbook_key(guestbook_name)).filter(User.identity == h.hexdigest())
+            userrecords = userrecord_query.fetch(1)
+            if len(userrecords) == 0:
+                userrecord.NS_record = h.hexdigest()[:10] + '.' + SECONDARY_DOMAIN
+                userrecord.A_record = h.hexdigest()[:10] + '.a.' + SECONDARY_DOMAIN
+                form_data1 = '''{"type":"NS","name":"%s", "content":"%s","ttl":3600}''' % (
+                userrecord.NS_record, userrecord.A_record)
+                result1 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
+                                     payload=form_data1,
+                                     method=urlfetch.POST,
+                                     headers={"X-Auth-Email": EMAIL,
+                                              "X-Auth-Key": AUTH_KEY,
+                                              "Content-Type": "application/json"})
+                form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
+                userrecord.A_record, userrecord.content)
+                result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
+                                     payload=form_data2,
+                                     method=urlfetch.POST,
+                                     headers={"X-Auth-Email": EMAIL,
+                                              "X-Auth-Key": AUTH_KEY,
+                                              "Content-Type": "application/json"})
+                if result1.status_code == 200 and result2.status_code == 200:
+                    userrecord.put()
+                    query_params = {
+                    'guestbook_name': guestbook_name, "identity": userrecord.identity}
+                    self.redirect('/result?' + urllib.urlencode(query_params))
+                else:
+                    pass
+            else:
+                query_params = {
+                    'guestbook_name': guestbook_name, "identity": h.hexdigest()}
+                self.redirect('/result?' + urllib.urlencode(query_params))
         else:
             pass
 
 app = webapp2.WSGIApplication([
-    ('/', Form),
+    ('/', NSForm),
     ('/result', ShowResult),
-    ('/register', Register),
-], debug=True)
+    ('/nsregister', NSRegister),
+    ('/fillconfig', cfgForm),
+    ('/showjsonconfig', ShowJSON)
+])
