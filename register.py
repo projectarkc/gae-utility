@@ -1,6 +1,6 @@
 import cgi
 import urllib
-import hashlib.sha1
+import hashlib
 
 from google.appengine.api import users, urlfetch
 from google.appengine.ext import ndb
@@ -19,7 +19,7 @@ Form_FOOTER_TEMPLATE = """\
 DEFAULT_DB_NAME = 'default_guestbook'
 
 ######
-#CONFIG
+# CONFIG
 ######
 
 # We set a parent key on the 'Greetings' to ensure that they are all
@@ -28,7 +28,7 @@ DEFAULT_DB_NAME = 'default_guestbook'
 # ~1/second.
 
 
-def guestbook_key(guestbook_name=DEFAULT_GUESTBOOK_NAME):
+def guestbook_key(guestbook_name=DEFAULT_DB_NAME):
     """Constructs a Datastore key for a Guestbook entity.
 
     We use guestbook_name as the key.
@@ -42,7 +42,8 @@ class User(ndb.Model):
     #password = ndb.StringProperty(indexed = False)
     number = ndb.StringProperty(indexed=False)
     content = ndb.StringProperty(indexed=False)
-    domain = ndb.StringProperty(indexed=False)
+    NS_record = ndb.StringProperty(indexed=False)
+    A_record = ndb.StringProperty(indexed=False)
     date = ndb.DateTimeProperty(auto_now_add=True)
 
 
@@ -66,22 +67,22 @@ class ShowResult(webapp2.RequestHandler):
         guestbook_name = self.request.get('guestbook_name',
                                           DEFAULT_DB_NAME)
         identity = self.request.get('identity', '')
-        userrecord_query = User.query(ancestor=guestbook_key(guestbook_name))
+        userrecord_query = User.query(
+            ancestor=guestbook_key(guestbook_name)).filter(User.identity == identity)
         userrecords = userrecord_query.fetch(1)
         try:
             resp = '''<html><body>
         <form>
-      DNS NS record linked to %s:  <input type="text" value="%s" readonly=True><br>
+      DNS NS record linked to %s via A record %s:  <input type="text" value="%s" readonly=True><br>
       Example JSON configuration file at client side: <br>
-      <textarea rows="15" cols="40">
-      %s 
-      </textarea>
+      <textarea rows="15" cols="40">%s</textarea>
     </form>
   </body>
-</html>''' % (userrecords[0].content, userrecords[0].domain, '''{
+</html>''' % (userrecords[0].content, userrecords[0].A_record, userrecords[0].NS_record,
+              '''{
     "control_domain":"%s",
     ......
-}''' % userrecords[0].domain)
+}''' % userrecords[0].NS_record)
         except Exception:
             resp = '''<html><body>
         Not Found
@@ -99,8 +100,8 @@ class Register(webapp2.RequestHandler):
         # rate to a single entity group should be limited to
         # ~1/second.
         guestbook_name = self.request.get('guestbook_name',
-                                          DEFAULT_GUESTBOOK_NAME)
-        userrecord = Greeting(parent=guestbook_key(guestbook_name))
+                                          DEFAULT_DB_NAME)
+        userrecord = User(parent=guestbook_key(guestbook_name))
 
         userrecord.content = self.request.get('ipaddr')
         #userrecord.password = self.request.get('password')
@@ -108,16 +109,25 @@ class Register(webapp2.RequestHandler):
         h = hashlib.sha1()
         h.update(self.request.get('ipaddr'))
         userrecord.identity = h.hexdigest()
-        userrecord.domain = h.hexdigest()[:10] + '.' + SECONDARY_DOMAIN
-        form_data = '''{"type":"NS","name":"%s", "content":"%s","ttl":3600}''' % (
-            userrecord.domain, userrecord.content)
-        result = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                payload=form_data,
-                                method=urlfetch.POST,
-                                headers={"X-Auth-Email": EMAIL,
-                                         "X-Auth-Key": AUTH_KEY,
-                                         "Content-Type": "application/json"})
-        if result.status_code == 200:
+        userrecord.NS_record = h.hexdigest()[:10] + '.' + SECONDARY_DOMAIN
+        userrecord.A_record = h.hexdigest()[:10] + '.a.' + SECONDARY_DOMAIN
+        form_data1 = '''{"type":"NS","name":"%s", "content":"%s","ttl":3600}''' % (
+            userrecord.NS_record, userrecord.A_record)
+        result1 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
+                                 payload=form_data1,
+                                 method=urlfetch.POST,
+                                 headers={"X-Auth-Email": EMAIL,
+                                          "X-Auth-Key": AUTH_KEY,
+                                          "Content-Type": "application/json"})
+        form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
+            userrecord.A_record, userrecord.content)
+        result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
+                                 payload=form_data2,
+                                 method=urlfetch.POST,
+                                 headers={"X-Auth-Email": EMAIL,
+                                          "X-Auth-Key": AUTH_KEY,
+                                          "Content-Type": "application/json"})
+        if result1.status_code == 200 and result2.status_code == 200:
             userrecord.put()
             query_params = {
                 'guestbook_name': guestbook_name, "identity": userrecord.identity}
