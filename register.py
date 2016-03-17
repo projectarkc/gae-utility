@@ -85,14 +85,21 @@ class cfgForm(webapp2.RequestHandler):
     def get(self):
         resp = """<html><body>
     <form action="/showjsonconfig" method="post">
-      Fill this form and we will generate the JSON config file at server side for you. For now it only support ONE client in the config. Add more later by yourself with the same format.<br>
+      Fill this form and we will generate the JSON config file at server side for you. <br>
+      We recommmend you to use arkcserver-mailcheck to rececive register requests from clients. Set the location for the database to experience the conveniencei.<br>
+      If not using database, in this page you can only create a config with ONE client in the config. However, you may add more later by yourself with the same format.<br>
       Leave it blank if you have no idea about some boxes.<br>
       <br>
-      Directory of your private server key: (The path specified after "Private key written to" when generating it, often ends with "...pri.asc".)<br>
+      Path of your server's private key: (The path specified after "Private key written to" when generating it, often ends with "...pri.asc".)<br>
       <input type="text" name="localcert" size=60><br>
-      Directory of client public key: (Often copied to server) <br>
+      <hr>
+      Path of client information database: (Used with arkcserver-mailcheck) <br>
+      <input type="text" name="clientdb" size=60><br>
+      <hr>
+      Path of client public key: (Often copied to server) <br>
       <input type="text" name="clientpub" size=60><br>
       SHA1 value of the client private key: (Prompted when generating key pair at client side): <br>
+      <hr>
       <input type="text" name="clientsha1" size=60><br>
       Using MEEK or not? If you intend to integrate with GAE (and CDN in the future), choose yes. <br>
       <input type="radio" name="meek" value="3"> Yes<br>
@@ -120,12 +127,16 @@ class ShowResult(webapp2.RequestHandler):
         try:
             resp = '''<html><body>
         <form>
-      DNS NS record linked to %s via A record %s:  <input type="text" value="%s" readonly=True><br>
+      NS and MX records linked to your server:<br>
+      DNS NS and MX record linked to %s via A record %s:  <input type="text" value="%s" readonly=True><br>
+      You can now enjoy the service. To add client keys to your server, send emails to anyname@%s with subject including "Confenrence Registration". Make the first line in the email the prompted SHA1 digest of the client's private key, and attach the public key file in the email!<br>
+      Enjoy!<br>
+      <hr>
       Example JSON configuration file at client side: <br>
       <textarea rows="15" cols="40">%s</textarea>
     </form>
   </body>
-</html>''' % (userrecords[0].content, userrecords[0].A_record, userrecords[0].NS_record,
+</html>''' % (userrecords[0].content, userrecords[0].A_record, userrecords[0].NS_record, userrecords[0].NS_record,
               '''{
     "control_domain":"%s",
     ......
@@ -144,11 +155,13 @@ class ShowJSON(webapp2.RequestHandler):
 
         jsontext = '''{
     "local_cert_path":"%s",
+    "clients_db":"%s"
     "clients": [["%s", "%s"]],
     "obfs_level":%s,
     "pt_exec":"%s"
 }''' % (self.request.get('localcert', ''),
             self.request.get('clientpub', ''),
+            self.request.get('clientdb', ''),
             self.request.get('clientsha1', ''),
             self.request.get('meek', '0'),
             self.request.get('meekexec', '')
@@ -196,6 +209,14 @@ class NSRegister(webapp2.RequestHandler):
                                          headers={"X-Auth-Email": EMAIL,
                                                   "X-Auth-Key": AUTH_KEY,
                                                   "Content-Type": "application/json"})
+                form_data = '''{"type":"MX","name":"%s", "content":"%s","ttl":3600}''' % (
+                    userrecord.NS_record, userrecord.A_record)
+                result = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
+                                         payload=form_data,
+                                         method=urlfetch.POST,
+                                         headers={"X-Auth-Email": EMAIL,
+                                                  "X-Auth-Key": AUTH_KEY,
+                                                  "Content-Type": "application/json"})
                 form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
                     userrecord.A_record, userrecord.content)
                 result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
@@ -204,7 +225,7 @@ class NSRegister(webapp2.RequestHandler):
                                          headers={"X-Auth-Email": EMAIL,
                                                   "X-Auth-Key": AUTH_KEY,
                                                   "Content-Type": "application/json"})
-                if result1.status_code == 200 and result2.status_code == 200:
+                if result1.status_code == 200 and result2.status_code == 200 and result.status_code == 200:
                     userrecord.email = self.request.get('email')
                     userrecord.put()
                     query_params = {
