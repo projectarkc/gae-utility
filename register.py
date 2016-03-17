@@ -127,8 +127,8 @@ class ShowResult(webapp2.RequestHandler):
         try:
             resp = '''<html><body>
         <form>
-      NS and MX records linked to your server:<br>
-      DNS NS and MX record linked to %s via A record %s:  <input type="text" value="%s" readonly=True><br>
+      NS record is linked to your server:<br>
+      DNS NS record linked to %s via A record %s:  <input type="text" value="%s" readonly=True><br>
       You can now enjoy the service. To add client keys to your server, send emails to anyname@%s with subject including "Confenrence Registration". Make the first line in the email the prompted SHA1 digest of the client's private key, and attach the public key file in the email!<br>
       Enjoy!<br>
       <hr>
@@ -209,14 +209,6 @@ class NSRegister(webapp2.RequestHandler):
                                          headers={"X-Auth-Email": EMAIL,
                                                   "X-Auth-Key": AUTH_KEY,
                                                   "Content-Type": "application/json"})
-                form_data = '''{"type":"MX","name":"%s", "content":"%s","ttl":3600}''' % (
-                    userrecord.NS_record, userrecord.A_record)
-                result = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
-                                         payload=form_data,
-                                         method=urlfetch.POST,
-                                         headers={"X-Auth-Email": EMAIL,
-                                                  "X-Auth-Key": AUTH_KEY,
-                                                  "Content-Type": "application/json"})
                 form_data2 = '''{"type":"A","name":"%s", "content":"%s","ttl":1800}''' % (
                     userrecord.A_record, userrecord.content)
                 result2 = urlfetch.fetch(url="https://api.cloudflare.com/client/v4/zones/" + ZONE_ID + "/dns_records",
@@ -225,7 +217,7 @@ class NSRegister(webapp2.RequestHandler):
                                          headers={"X-Auth-Email": EMAIL,
                                                   "X-Auth-Key": AUTH_KEY,
                                                   "Content-Type": "application/json"})
-                if result1.status_code == 200 and result2.status_code == 200 and result.status_code == 200:
+                if result1.status_code == 200 and result2.status_code == 200:
                     userrecord.email = self.request.get('email')
                     userrecord.put()
                     query_params = {
